@@ -438,6 +438,37 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
     };
   }
 
+  // creator_info drives the composer (account shown, allowed privacy levels,
+  // interaction toggles, max duration), as required by TikTok's Content
+  // Sharing Guidelines for the Direct Post audit. Uses this.fetch so an
+  // expired token throws RefreshToken and /integrations/function refreshes
+  // and retries.
+  async creatorInfo(accessToken: string) {
+    const { data } = await (
+      await this.fetch(
+        'https://open.tiktokapis.com/v2/post/publish/creator_info/query/',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json; charset=UTF-8',
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      )
+    ).json();
+
+    return {
+      nickname: data?.creator_nickname,
+      username: data?.creator_username,
+      avatar: data?.creator_avatar_url,
+      privacyLevelOptions: data?.privacy_level_options || [],
+      commentDisabled: !!data?.comment_disabled,
+      duetDisabled: !!data?.duet_disabled,
+      stitchDisabled: !!data?.stitch_disabled,
+      maxVideoPostDurationSec: data?.max_video_post_duration_sec,
+    };
+  }
+
   // Single status check for a publish_id, no loops and no timers: `post` returns
   // a `pending` PostResponse right after the upload, and the post workflow polls
   // this method with durable timers, so a stuck/retried check can never re-run
@@ -849,6 +880,26 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
     // For videos we only need the total size up front (HEAD / statSync) so we
     // can init the upload; the bytes themselves are streamed later, never fully
     // loaded into memory.
+    // Direct Post: query creator_info right before publishing (TikTok's
+    // guidelines) and refuse a privacy level the account no longer offers,
+    // before anything is sent. UPLOAD ignores privacy, so it is not checked.
+    if (this.contentPostingMethod(firstPost) === 'DIRECT_POST') {
+      const creator = await this.creatorInfo(accessToken);
+      const privacy = firstPost?.settings?.privacy_level;
+      if (
+        privacy &&
+        creator.privacyLevelOptions.length &&
+        !creator.privacyLevelOptions.includes(privacy)
+      ) {
+        throw new BadBody(
+          'tiktok-error-upload',
+          JSON.stringify({ privacy }),
+          Buffer.from(JSON.stringify({ privacy })),
+          'Privacy level not available for this TikTok account, please choose another one'
+        );
+      }
+    }
+
     const videoSize = isPhoto
       ? undefined
       : await this.mediaSize(videoPath, 'tiktok-error-upload');
