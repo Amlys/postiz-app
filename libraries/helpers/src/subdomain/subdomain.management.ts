@@ -1,8 +1,9 @@
 import { parse } from 'tldts';
 
 export function getCookieUrlFromDomain(domain: string) {
-  // allowPrivateDomains: without it, a host under a private public suffix
-  // (e.g. *.hstgr.cloud) yields the suffix itself, and browsers reject the cookie.
+  // Scope the cookie to the full host, not the registrable domain: the bundled
+  // Public Suffix List can lag behind browsers' (e.g. hstgr.cloud), and a cookie
+  // set on a public suffix is rejected (Chrome). Front and API share one host.
   const url = parse(domain, { allowPrivateDomains: true });
-  return url.domain! ? '.' + url.domain! : url.hostname!;
+  return url.domain! ? '.' + url.hostname! : url.hostname!;
 }
